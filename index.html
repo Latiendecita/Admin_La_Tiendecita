@@ -275,15 +275,11 @@
 const SUPABASE_URL = 'https://xubwfjjevvjaotvrmwub.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1YndmampldnZqYW90dnJtd3ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1MTY5MzQsImV4cCI6MjEwNzA5MjkzNH0.55bP8Ah6-O4Zx0kgGZ73snRGAbiq7yPFCt89XdG9-hY';
 
-const SUPABASE_SERVICE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh1YndmampldnZqYW90dnJtd3ViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTUxNjkzNCwiZXhwIjoyMTA3MDkyOTM0fQ.AjBK3OR3que9C3eOcdlRB5eSjRa0RwWahEjlE33EiO8';
-const GITHUB_TOKEN = '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';
-const GITHUB_USER = 'Latiendecita';
-const GITHUB_REPO = 'imagenes-tiendecita';
-
+const BUCKET = 'productos';
 
 /* ====== API ====== */
 async function sbFetch(table, params = '', method = 'GET', body = null, useService = false) {
-  const key = useService ? SUPABASE_SERVICE : SUPABASE_ANON;
+  const key = SUPABASE_ANON;
   const opts = {
     method,
     headers: {
@@ -303,48 +299,20 @@ async function sbFetch(table, params = '', method = 'GET', body = null, useServi
   return res.json();
 }
 
-/* ====== GITHUB IMAGE UPLOAD ====== */
-async function asegurarRepoGithub() {
-  const h = { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' };
-  const r = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}`, { headers: h });
-  if (r.status !== 404) return;
-  const c = await fetch('https://api.github.com/user/repos', {
-    method: 'POST', headers: h,
-    body: JSON.stringify({ name: GITHUB_REPO, description: 'Imágenes de productos - La Tiendecita', private: false, auto_init: true })
-  });
-  if (!c.ok) throw new Error('No se pudo crear el repositorio de imágenes');
-}
-async function subirImagenGithub(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
-  const nombre = `producto_${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
-  const ruta = `media/${nombre}`;
-
-  const arrayBuffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(arrayBuffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const b64 = btoa(binary);
-
-  // Crear repo si no existe o subir directo
-  const url = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${ruta}`;
-  await asegurarRepoGithub();
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/vnd.github.v3+json'
-    },
-    body: JSON.stringify({
-      message: `Agregar imagen: ${nombre}`,
-      content: b64
-    })
+/* ====== SUBIDA DE IMÁGENES (Supabase Storage) ====== */
+async function subirImagen(file) {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const nombre = `producto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${ext}`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${nombre}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`, 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(`GitHub ${res.status}: ${err.message || 'error subiendo imagen'}${res.status === 401 ? ' (el token de GitHub fue revocado o es inválido)' : ''}`);
+    throw new Error(`Storage ${res.status}: ${err.message || err.error || 'error subiendo imagen'}${res.status === 400 || res.status === 403 || res.status === 404 ? ' (corre el SQL supabase_politicas.sql en Supabase)' : ''}`);
   }
-  return `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${ruta}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${nombre}`;
 }
 
 /* ====== ESTADO ====== */
@@ -608,7 +576,7 @@ document.getElementById('btnGuardarProducto').addEventListener('click', async ()
     let imagenUrl = imgUrlActual;
     if (imgFileActual) {
       try {
-        imagenUrl = await subirImagenGithub(imgFileActual);
+        imagenUrl = await subirImagen(imgFileActual);
       } catch (e) {
         mostrarAlerta('alertaModalProducto', 'Error subiendo imagen: ' + e.message, false);
         return;
